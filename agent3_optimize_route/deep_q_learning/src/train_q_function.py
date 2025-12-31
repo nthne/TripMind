@@ -112,7 +112,7 @@ torch.save({
 
 print(f"Saved checkpoint at episode {episode}")
 
-# Test thử model đã train
+# Test 
 state = env.reset()
 done = False
 

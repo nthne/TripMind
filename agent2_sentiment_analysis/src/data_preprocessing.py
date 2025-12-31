@@ -1,12 +1,12 @@
 import re
+import json
+
 def clean_text(text):
     text = text.lower()
     text = re.sub(r"http\S+", "", text)
     text = re.sub(r"[^a-zA-ZÀ-ỹ\s]", "", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
-
-import json
 
 def load_raw_data(path):
     data = []
