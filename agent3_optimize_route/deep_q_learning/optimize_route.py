@@ -8,14 +8,6 @@ from src.environment_route import RouteEnv
 from src.model import DQN
 from src.build_dataset_for_training import sample_episode_places
 
-
-# places = [
-#     {"destination_id": "p0", "lat": 21.03, "lng": 105.85},
-#     {"destination_id": "p1", "lat": 21.01, "lng": 105.84},
-#     {"destination_id": "p2", "lat": 21.05, "lng": 105.86},
-#     {"destination_id": "p3", "lat": 21.00, "lng": 105.83},
-#     {"destination_id": "p4", "lat": 21.04, "lng": 105.82}
-# ]
 source_data_path = "data/cleaned_data.jsonl"
 _, test_places = sample_episode_places(source_data_path, k=5)
 
