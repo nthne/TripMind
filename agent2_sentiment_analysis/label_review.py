@@ -3,45 +3,103 @@ from src.model import LabelReviewModel
 from src.utils import encode
 from src.data_preprocessing import clean_text
 
+# Khởi tạo Model và Vocab từ Checkpoint
 checkpoint = torch.load("agent2_sentiment_analysis/sentiment_checkpoint.pt", map_location="cpu")
-
 vocab = checkpoint["vocab"]
-
 model = LabelReviewModel(len(vocab))
 model.load_state_dict(checkpoint["model_state"])
+model.eval()
 
-def predict_proba(text):
-    model.eval()
-    x = torch.tensor([encode(clean_text(text), vocab)])
+def predict_batch(texts):
+    """Dự đoán cảm xúc cho một danh sách văn bản cùng lúc (Batch Prediction)"""
+    if not texts:
+        return []
+    
+    # 1. Tiền xử lý và mã hóa toàn bộ danh sách
+    encoded_batch = [encode(clean_text(t), vocab) for t in texts]
+    x = torch.tensor(encoded_batch)
+    
+    # 2. Chạy qua mô hình
     with torch.no_grad():
-        p = model(x).item()
-    # print(text, p)
-    return p
+        probs = model(x)
+        # Xử lý trường hợp mô hình squeeze mất chiều batch khi chỉ có 1 review
+        if probs.dim() == 0:
+            return [probs.item()]
+        return probs.tolist()
 
-# Input: Danh sách các địa điểm và các review của nó
-# Output: Danh sách các địa điểm với ranking từ tốt nhất đến thấp nhất (Chỉ trả về name và score)
-def ranking_place(list_places, threshold = 0.6):
+def ranking_place(list_places, threshold=0.6):
+    """
+    Agent 2: Xếp hạng các địa điểm dựa trên phân tích cảm xúc.
+    - Input: List địa điểm từ Agent 1 (mỗi địa điểm có mảng reviews)
+    - Output: Top địa điểm đã được chấm điểm và sắp xếp
+    """
+    if not list_places:
+        return []
 
-    places_with_score = []
+    all_reviews_text = []
+    place_map = [] # Lưu vết review này thuộc về địa điểm thứ mấy trong list_places
+    
+    # BƯỚC 1: Gom tất cả review của tất cả địa điểm vào một list lớn
+    for i, place in enumerate(list_places):
+        reviews = place.get("reviews", [])
+        for rv in reviews:
+            all_reviews_text.append(rv)
+            place_map.append(i)
+            
+    # Nếu không có review nào để đánh giá, trả về danh sách với score = 0
+    if not all_reviews_text:
+        return sorted([
+            {
+                "destination_id": p.get("destination_id"),
+                "name": p.get("name"),
+                "final_score": 0.0,
+                "reviews": p.get("reviews", [])[:3]
+            } for p in list_places
+        ], key=lambda x: x["final_score"], reverse=True)
 
-    for place in list_places:
-        place_with_score = {"name": place["name"]}
-        positive_ratio = 0
-        sentiment_score = 0
-
-        for cur_rv in place["reviews"]:
-            p_rv = predict_proba(cur_rv)
-            if p_rv >= threshold:
-                positive_ratio += 1
-            sentiment_score += p_rv
+    # BƯỚC 2: Dự đoán cảm xúc cho toàn bộ batch (Nhanh hơn gọi lẻ tẻ)
+    all_probs = predict_batch(all_reviews_text)
+    
+    # BƯỚC 3: Nhóm kết quả dự đoán về lại từng địa điểm ban đầu
+    results_by_place = {i: [] for i in range(len(list_places))}
+    for prob, place_idx in zip(all_probs, place_map):
+        results_by_place[place_idx].append(prob)
         
-        positive_ratio /= len(place["reviews"])
-        sentiment_score /= len(place["reviews"])
+    # BƯỚC 4: Tính toán điểm số tổng hợp (Final Score)
+    final_results = []
+    for i, place in enumerate(list_places):
+        scores = results_by_place[i]
+        
+        if not scores:
+            sentiment_score = 0.0
+            positive_ratio = 0.0
+        else:
+            # Điểm cảm xúc trung bình (0.0 -> 1.0)
+            sentiment_score = sum(scores) / len(scores)
+            # Tỷ lệ review vượt ngưỡng tích cực
+            positive_count = sum(1 for s in scores if s >= threshold)
+            positive_ratio = positive_count / len(scores)
+            
+        # Công thức Ranking: 70% dựa trên cảm xúc chung, 30% dựa trên tỷ lệ hài lòng
+        final_score = (0.7 * sentiment_score) + (0.3 * positive_ratio)
+        
+        final_results.append({
+            "destination_id": place.get("destination_id"),
+            "name": place.get("name"),
+            "final_score": round(final_score, 3),
+            "reviews": place.get("reviews", [])[:3] # Giữ lại 3 review tiêu biểu
+        })
+    
+    # BƯỚC 5: Sắp xếp từ tốt nhất đến thấp nhất
+    return sorted(final_results, key=lambda x: x["final_score"], reverse=True)
 
-        place_with_score["final_score"] = 0.7 * sentiment_score + 0.3 * positive_ratio
-
-    sorted_places = sorted(places_with_score, key=lambda x: x["final_score"], reverse=True)
-
-    return(sorted_places)
- 
-predict_proba("Thực tế thì giá vé khá cao so với những gì mình nhận được theo ý kiến riêng. 100k/người, svien thì 50k, trẻ em dưới 16t thì free. Tuy vậy khu vực tham quan ko có nhiều, các chỉ dẫn khá thưa thớt, các biển bảng ghi thông tin cũng ko đc chăm chút chỉnh chu lắm. Đổi lại thì khu vực nhà trưng bày là 1 điểm rất sáng giá, các hiệu ứng hình ảnh thể hiện tốt các hoa văn xưa cũ, rất có tính mỹ học, nên có thêm thông tin về các kĩ thuật sử dụng, hoặc các thông tin về di vật chi tiết hơn như di tích nhà tù Hỏa Lò chẳng hạn, điều này là có thể làm được với 1 di tích Hoàng Thành Thăng Long có lịch sử lâu đời của riêng nó")
+# Test nhanh một trường hợp
+if __name__ == "__main__":
+    example_input = [
+        {
+            "destination_id": "123",
+            "name": "Chùa Bà Chúa Xứ",
+            "reviews": ["Nơi này rất linh thiêng", "Cảnh đẹp và thanh tịnh"]
+        }
+    ]
+    print(ranking_place(example_input))
