@@ -1,11 +1,15 @@
-from fastapi import FastAPI
-import torch
+# agent3/api.py
+from fastapi import FastAPI, Body
+import uvicorn
 from optimize_route import optimize_route
+
 app = FastAPI()
 
-checkpoint_path = "agent3_optimize_route/deep_q_learning/dqn_route_checkpoints.pt"
+@app.post("/optimize")
+def optimize(list_places: list = Body(...)):
+    optimized_data = optimize_route(list_places)
+    return optimized_data
 
-@app.post("/optimize_route")
-def optimize_route(list_places):
-    return optimize_route(list_places, checkpoint_path)
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=9000)
 

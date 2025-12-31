@@ -1,3 +1,6 @@
+"""
+Format the data for sentiment analysis.
+"""
 // Input:
 [
   {
