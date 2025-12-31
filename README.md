@@ -89,13 +89,13 @@ It is recommended to use a virtual environment (Conda or venv) to manage depende
 ```bash
 conda activate dl_env
 pip install flask fastapi uvicorn torch requests chromadb together gymnasium numpy
-
+```
 ### 2. Together.ai Configuration
 
 Open agent/src/api.py and insert your personal API key to enable Agent 4 (Narrative Output):
 ```bash
 TOGETHER_CLIENT = Together(api_key="TOGETHER_AI_API_KEY")
-
+```
 ### How to Run
 To operate the system, you must start the agents in three separate terminal windows:
 
@@ -103,19 +103,22 @@ Step 1: Start Agent 3 (Route Optimizer)
 
 ```bash
 python agent3_optimize_route/api.py
+```
 Step 2: Start Agent 2 (Sentiment Ranker)
 
 ```bash
 python agent2_sentiment_analysis/api.py
+```
 Step 3: Start Agent 1 - Gateway (Main API)
 
 ```bash
 python agent/src/api.py
+```
 Step 4: Run Integrated Test
 
 ```bash
 python test_system.py
-
+```
 ### Main API Endpoints
 Endpoint	Method	Agent	Responsibility
 /api/v1/recommend	POST	Gateway	Entry point for the full 4-agent journey
@@ -127,7 +130,7 @@ Endpoint	Method	Agent	Responsibility
 ---
 
 
-##Key Features
+## Key Features
 Semantic Search: Captures travel intent beyond simple keywords using Transformer embeddings.
 
 Sentiment-Driven Quality: Automatically filters out places with poor traveler feedback.
