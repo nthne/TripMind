@@ -1,5 +1,13 @@
 from torch.utils.data import DataLoader
 import torch
+import pandas as pd
+from sklearn.model_selection import train_test_split
+import torch.optim as optim
+import torch.nn as nn
+from src.data_preprocessing import split_raw_data, clean_text
+from src.utils import build_vocab
+from src.dataset import ReviewDataset
+from src.model import LabelReviewModel
 
 def train(model, dataloader, optimizer, criterion):
     model.train()
@@ -32,15 +40,6 @@ def evaluate(model, dataloader):
 
     return correct / total
 
-
-import pandas as pd
-from sklearn.model_selection import train_test_split
-import torch.optim as optim
-import torch.nn as nn
-from src.data_preprocessing import split_raw_data, clean_text
-from src.utils import build_vocab
-from src.dataset import ReviewDataset
-from src.model import LabelReviewModel
 texts, labels, neutral = split_raw_data("data/final_cleaned_data_with_coords.jsonl")
 
 vocab = build_vocab(texts)
@@ -64,7 +63,6 @@ for epoch in range(10):
     acc = evaluate(model, test_loader)
     print(f"Epoch {epoch}: loss={loss:.4f}, acc={acc:.4f}")
 
-# Đánh nhãn các review 2 - 4* bằng model đã train ở trên -> Lấy thêm data -> Train tiếp
 print("Use above model to evaluate and label neutral review --> Add new labeled sample to dataset to train continuously")
 
 from src.utils import encode
