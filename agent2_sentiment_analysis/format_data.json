@@ -1,0 +1,34 @@
+// Input:
+[
+  {
+    "place_id": "cf_123",
+    "name": "Quán cà phê X",
+    "reviews": [
+      "Quán rất đông nhưng phục vụ nhanh",
+      "Cà phê dạo này nhạt hơn trước"
+    ]
+  },
+  {
+    "place_id": "cf_456",
+    "name": "Quán cà phê Y",
+    "reviews": [
+      "...",
+      "...",
+      "..."
+    ]
+  },
+  ...
+]
+
+// Output:
+[
+  {
+    "name": "Quán cà phê X",
+    "score": 0.9
+  },
+  {
+    "name": "Quán cà phê X",
+    "score": 0.8
+  },
+  ...
+]
