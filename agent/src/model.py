@@ -2,49 +2,6 @@ import torch
 import torch.nn as nn
 import math
 
-class TripMindEncoder(nn.Module):
-    def __init__(self, vocab_size, d_model=128, nhead=8, num_layers=2):
-        super(TripMindEncoder, self).__init__()
-        self.d_model = d_model
-        
-        # 1. Embedding Layer: Chuyển từ ID sang Vector
-        self.embedding = nn.Embedding(vocab_size, d_model)
-        
-        # 2. Positional Encoding: Giúp Transformer hiểu thứ tự của các từ
-        self.pos_encoder = PositionalEncoding(d_model)
-        
-        # 3. Transformer Encoder Layers
-        encoder_layers = nn.TransformerEncoderLayer(
-            d_model=d_model, 
-            nhead=nhead, 
-            dim_feedforward=d_model * 4, 
-            batch_first=True,
-            dropout=0.1
-        )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layers, num_layers=num_layers)
-        
-        # 4. Output Layer: Nén kết quả về một vector 128 chiều đại diện cho cả câu
-        self.fc_out = nn.Linear(d_model, d_model)
-
-    def forward(self, x):
-        # x: [batch_size, seq_len]
-        
-        # Tạo mask để bỏ qua các ký tự padding (0)
-        padding_mask = (x == 0) 
-        
-        x = self.embedding(x) * math.sqrt(self.d_model)
-        x = self.pos_encoder(x)
-        
-        # Transformer xử lý toàn bộ ngữ cảnh
-        output = self.transformer_encoder(x, src_key_padding_mask=padding_mask)
-        
-        # Pooling: Lấy trung bình cộng của các từ (Mean Pooling) để ra vector câu
-        # Lưu ý: Chỉ lấy trung bình của các từ thực sự (không lấy padding)
-        mask = ~padding_mask.unsqueeze(-1)
-        sentence_emb = (output * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
-        
-        return self.fc_out(sentence_emb)
-
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
         super().__init__()
@@ -56,5 +13,60 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        x = x + self.pe[:x.size(1)]
-        return x
+        # x shape: [batch_size, seq_len, d_model]
+        return x + self.pe[:x.size(1)]
+
+class TripMindEncoder(nn.Module):
+    def __init__(self, vocab_size, num_categories=None, d_model=256, nhead=8, num_layers=6):
+        super().__init__()
+        self.d_model = d_model
+        self.embedding = nn.Embedding(vocab_size, d_model, padding_idx=0)
+        self.pos_encoder = PositionalEncoding(d_model)
+        
+        encoder_layers = nn.TransformerEncoderLayer(
+            d_model=d_model, 
+            nhead=nhead, 
+            dim_feedforward=d_model * 4,
+            dropout=0.1,
+            batch_first=True
+        )
+        
+        # enable_nested_tensor=False để tránh lỗi trên chip MPS (Mac)
+        self.transformer_encoder = nn.TransformerEncoder(
+            encoder_layers, 
+            num_layers=num_layers,
+            enable_nested_tensor=False 
+        )
+        
+        # Nhánh 1: Output Embedding cho Agent 1 (Vector 256 chiều)
+        self.fc_emb = nn.Linear(d_model, d_model)
+        
+        # Nhánh 2: Dự đoán Category (Chỉ dùng trong lúc Training để ép model học ngữ nghĩa)
+        self.num_categories = num_categories
+        if num_categories is not None:
+            self.category_classifier = nn.Linear(d_model, num_categories)
+
+    def forward(self, x):
+        # Tạo padding mask (True tại vị trí là <PAD>=0)
+        padding_mask = (x == 0)
+        
+        # Input: [batch_size, seq_len] -> Embedding: [batch_size, seq_len, d_model]
+        x = self.embedding(x) * math.sqrt(self.d_model)
+        x = self.pos_encoder(x)
+        
+        # Transformer pass
+        output = self.transformer_encoder(x, src_key_padding_mask=padding_mask)
+        
+        # Mean Pooling (Chỉ lấy trung bình các token thực tế, bỏ qua PAD)
+        mask = ~padding_mask.unsqueeze(-1)
+        sentence_emb = (output * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1e-9)
+        
+        # Trích xuất vector đặc trưng
+        final_embedding = self.fc_emb(sentence_emb)
+        
+        # Nếu đang trong chế độ huấn luyện và có classifier
+        if self.num_categories is not None:
+            cat_logits = self.category_classifier(sentence_emb)
+            return final_embedding, cat_logits
+            
+        return final_embedding

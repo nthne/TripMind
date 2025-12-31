@@ -1,110 +1,126 @@
-import torch
-import numpy as np
-import pickle
-from gensim.models import Word2Vec
-from torch.utils.data import DataLoader
-from src.model import TripMindEncoder, TripMindTrainer
-from src.dataset import TripMindDataset
-from sklearn.preprocessing import LabelEncoder
 import json
+import torch
 import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader
+import pickle
+import os
+import re
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+from model import TripMindEncoder
+from dataset import TripMindDataset
 
-# Configurations
-DEVICE = torch.device('mps' if torch.backends.mps.is_available() else 'cpu')
-W2V_PATH = 'weights/tripmind_w2v.model'
-DATA_PATH = 'data/cleaned_data.jsonl'
-EMBED_DIM, HIDDEN_DIM, OUTPUT_DIM = 128, 128, 128
+# Khởi tạo danh sách lưu lịch sử
+history = {
+    'train_loss': [],
+    'train_acc': []
+}
 
-EPOCHS = 50
+# --- CẤU HÌNH ---
+DATA_PATH = "/kaggle/input/dl-dataset/cleaned_data.jsonl"
+WEIGHTS_DIR = "/kaggle/working/"
+MAX_SEQ_LEN = 100
 BATCH_SIZE = 32
-LR = 0.001
-NUM_CLASSES = len(le.classes_)
+EPOCHS = 100  # Tăng lên để thấy sự hội tụ
+LEARNING_RATE = 5e-5
+D_MODEL = 256
+NHEAD = 8
+NUM_LAYERS = 4 
+best_acc = 0.0  
 
-w2v_model = Word2Vec.load(W2V_PATH)
-word2idx = {word: i + 2 for i, word in enumerate(w2v_model.wv.index_to_key)}
-word2idx['<PAD>'], word2idx['<UNK>'] = 0, 1
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-embed_matrix = np.zeros((len(word2idx), EMBED_DIM))
-for word, i in word2idx.items():
-    if word in w2v_model.wv: embed_matrix[i] = w2v_model.wv[word]
+# --- TIỀN XỬ LÝ VĂN BẢN ---
+def clean_text(text):
+    text = str(text).lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    return text.split()
 
-# Prepare Label Encoder
-cats = []
-with open(DATA_PATH, 'r') as f:
-    for l in f:
-        c = json.loads(l).get("categories")
-        try:
-            name = (json.loads(c) if isinstance(c, str) else c)[0]['name']
-            cats.append(name)
-        except: pass
-le = LabelEncoder().fit(cats)
 
-# Training Setup
-encoder = TripMindEncoder(len(word2idx), EMBED_DIM, HIDDEN_DIM, OUTPUT_DIM, embed_matrix)
-trainer = TripMindTrainer(encoder, OUTPUT_DIM, len(le.classes_)).to(DEVICE)
-dataset = TripMindDataset(DATA_PATH, word2idx, le)
-train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
-
-def train_model(model, train_loader, epochs, lr, device):
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+def train():
+    global best_acc
+    print(f"🚀 Khởi tạo Multi-task Learning trên {device}...")
     
-    print(f"Bắt đầu huấn luyện trên thiết bị: {device}")
-    model.train()
+    dataset = TripMindDataset(DATA_PATH)
+    dataloader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True)
+    
+    vocab_size = len(dataset.word2idx)
+    num_destinations = len(dataset.label_encoder.classes_)
+    num_categories = len(dataset.cat_encoder.classes_)
+    
+    print(f"📊 Vocab: {vocab_size} | Địa danh: {num_destinations} | Loại hình: {num_categories}")
 
-    for epoch in range(epochs):
-        total_loss = 0
-        correct = 0
-        total = 0
+    # Khởi tạo Model với 2 đầu ra
+    model = TripMindEncoder(
+        vocab_size=vocab_size, 
+        num_categories=num_categories, # Truyền vào để kích hoạt classifier
+        d_model=D_MODEL, 
+        nhead=NHEAD, 
+        num_layers=NUM_LAYERS
+    ).to(device)
+    
+    # Classifier phụ cho Destination ID
+    dest_classifier = nn.Linear(D_MODEL, num_destinations).to(device)
+    
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.AdamW(list(model.parameters()) + list(dest_classifier.parameters()), lr=LEARNING_RATE)
+
+    for epoch in range(EPOCHS):
+        model.train()
+        total_loss, correct, total = 0, 0, 0
+        loop = tqdm(dataloader, desc=f"Epoch [{epoch+1}/{EPOCHS}]")
         
-        for texts, labels in train_loader:
-            texts, labels = texts.to(device), labels.to(device)
+        for texts, labels_dist, labels_cat in loop:
+            texts, labels_dist, labels_cat = texts.to(device), labels_dist.to(device), labels_cat.to(device)
             
-            # Forward pass
             optimizer.zero_grad()
-            outputs = model(texts)
-            loss = criterion(outputs, labels)
             
-            # Backward and optimize
-            loss.backward()
+            # Forward pass: Model trả về Embedding và Logits của Category
+            emb, cat_logits = model(texts)
+            dest_outputs = dest_classifier(emb)
+            
+            # Tính toán 2 loại Loss
+            loss_dist = criterion(dest_outputs, labels_dist) # Phân biệt địa danh
+            loss_cat = criterion(cat_logits, labels_cat)    # Phân biệt loại hình (Chùa vs Biển)
+            
+            # Loss tổng hợp (Ưu tiên học ngữ nghĩa Category với trọng số 2.0)
+            batch_loss = loss_dist + (2.0 * loss_cat)
+            
+            batch_loss.backward()
             optimizer.step()
             
-            # Statistics
-            total_loss += loss.item()
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+            total_loss += batch_loss.item()
             
-        avg_loss = total_loss / len(train_loader)
-        accuracy = 100 * correct / total
-        print(f"Epoch [{epoch+1}/{epochs}] - Loss: {avg_loss:.4f} - Acc: {accuracy:.2f}%")
+            # Tính accuracy dựa trên Destination (để so sánh với bản cũ)
+            _, predicted = torch.max(dest_outputs.data, 1)
+            total += labels_dist.size(0)
+            correct += (predicted == labels_dist).sum().item()
+            
+            epoch_acc = 100 * correct / total
+            loop.set_postfix(loss=f"{total_loss/len(dataloader):.4f}", acc=f"{epoch_acc:.2f}%")
 
-# Training Loops
-train_model(trainer, train_loader, EPOCHS, LR, DEVICE)
+        # Lưu lịch sử để vẽ biểu đồ
+        history['train_loss'].append(total_loss/len(dataloader))
+        history['train_acc'].append(epoch_acc)
 
-# Save Model and Assets
-import os
-if not os.path.exists('weights'):
-    os.makedirs('weights')
+        if epoch_acc > best_acc:
+            best_acc = epoch_acc
+            torch.save(model.state_dict(), os.path.join(WEIGHTS_DIR, "encoder_weights.pth"))
+            print(f"🌟 Best Model Updated: {best_acc:.2f}%")
 
-# Save weight of Encoder (Semantic Vector)
-torch.save(encoder.state_dict(), "weights/encoder_weights.pth")
+    # Lưu Assets bao gồm cả cat_encoder
+    assets = {
+        "word2idx": dataset.word2idx,
+        "vocab_size": vocab_size,
+        "label_encoder": dataset.label_encoder,
+        "cat_encoder": dataset.cat_encoder,
+        "d_model": D_MODEL,
+        "nhead": NHEAD,
+        "num_layers": NUM_LAYERS
+    }
+    with open(os.path.join(WEIGHTS_DIR, "assets.pkl"), "wb") as f:
+        pickle.dump(assets, f)
 
-# Save all weights of Trainer (for finetune)
-torch.save(trainer.state_dict(), "/weights/full_trainer_weights.pth")
-
-# Save Label Encoder and Word2Idx for Inference
-with open("weights/assets.pkl", "wb") as f:
-    pickle.dump({
-        'word2idx': word2idx, 
-        'label_encoder': le,
-        'vocab_size': len(word2idx),
-        'num_classes': NUM_CLASSES
-    }, f)
-
-print("Save model!")
-
-# After training
-torch.save(encoder.state_dict(), "weights/encoder_weights.pth")
-with open("weights/assets.pkl", "wb") as f:
-    pickle.dump({'word2idx': word2idx, 'label_encoder': le}, f)
+if __name__ == "__main__":
+    train()
