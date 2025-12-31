@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
+from build_dataset_for_training import sample_episode_places
 
 def select_action(state, visited, epsilon):
     if np.random.rand() < epsilon:
@@ -18,23 +19,17 @@ import random
 from environment_route import RouteEnv
 from model import DQN
 
-places = [
-    {"id": "p0", "lat": 21.03, "lng": 105.85},
-    {"id": "p1", "lat": 21.01, "lng": 105.84},
-    {"id": "p2", "lat": 21.05, "lng": 105.86},
-    {"id": "p3", "lat": 21.00, "lng": 105.83},
-    {"id": "p4", "lat": 21.04, "lng": 105.82}
-]
+STATE_DIM = 15
+ACTION_DIM = 5
+source_data_path = "data/cleaned_data.jsonl"
 
-env = RouteEnv(places)
-
-policy_net = DQN(env.observation_space.shape[0], env.action_space.n)
-target_net = DQN(env.observation_space.shape[0], env.action_space.n)
+policy_net = DQN(STATE_DIM, ACTION_DIM)
+target_net = DQN(STATE_DIM, ACTION_DIM)
 target_net.load_state_dict(policy_net.state_dict())
 target_net.eval()
 
 optimizer = optim.Adam(policy_net.parameters(), lr=1e-3)
-memory = deque(maxlen=10000)
+memory = deque(maxlen=20000)
 
 gamma = 0.99
 epsilon_min = 0.05
@@ -86,6 +81,13 @@ def optimize():
     optimizer.step()
 
 for episode in range(start_episode, start_episode + 1000):
+    
+    province_id, episode_places = sample_episode_places(
+        source_data_path, k=5
+    )
+    
+    env = RouteEnv(episode_places)
+
     state = env.reset()
     done = False
 
@@ -112,7 +114,12 @@ torch.save({
 
 print(f"Saved checkpoint at episode {episode}")
 
-# Test 
+# Test thử model đã train
+policy_net.eval()
+
+_, test_places = sample_episode_places(source_data_path, k=5)
+env = RouteEnv(test_places)
+
 state = env.reset()
 done = False
 
@@ -120,6 +127,5 @@ while not done:
     action = select_action(state, env.visited, epsilon=0.0)
     state, _, done, _ = env.step(action)
 
-route = [places[i]["id"] for i in env.route]
+route = [test_places[i]["destination_id"] for i in env.route]
 print("Optimal route:", route)
-

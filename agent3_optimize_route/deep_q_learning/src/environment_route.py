@@ -29,8 +29,12 @@ class RouteEnv(gym.Env):
         return self._get_state()
 
     def _get_state(self):
-        cur = self.places[self.current]
-        return np.concatenate([[cur["lat"], cur["lng"]], self.visited])
+        coords = []
+        for p in self.places:
+            coords.extend([p["lat"], p["lng"]])
+
+        return np.array(coords + self.visited.tolist(), dtype=np.float32)
+
 
     def step(self, action):
         if self.visited[action] == 1:
