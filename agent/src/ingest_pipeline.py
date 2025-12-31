@@ -4,113 +4,123 @@ import torch
 import pickle
 import warnings
 import os
-from sklearn.exceptions import InconsistentVersionWarning
 from model import TripMindEncoder
 from utils import get_semantic_vector
 
-warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+# Tắt cảnh báo phiên bản sklearn không khớp
+warnings.filterwarnings("ignore")
 
-device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-print(f"--- Đang chạy trên thiết bị: {device} ---")
+# Cấu hình thiết bị
+DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu")
+print(f"🚀 Đang chạy Ingest trên thiết bị: {DEVICE}")
 
-# 1. Load assets & model
+# --- CẤU HÌNH ĐƯỜNG DẪN ---
 ASSETS_PATH = "/Users/trannguyenmyanh/Documents/TripMind/agent/weights/assets.pkl"
 WEIGHTS_PATH = "/Users/trannguyenmyanh/Documents/TripMind/agent/weights/encoder_weights.pth"
-
-with open(ASSETS_PATH, "rb") as f:
-    assets = pickle.load(f)
-WORD2IDX = assets['word2idx']
-vocab_size = assets['vocab_size']
-
-encoder = TripMindEncoder(vocab_size, d_model=128, nhead=8, num_layers=4)
-encoder.load_state_dict(torch.load(WEIGHTS_PATH, map_location=device))
-encoder.to(device).eval()
-
-# 2. Khởi tạo ChromaDB
 DB_PATH = "/Users/trannguyenmyanh/Documents/TripMind/agent/tripmind_vector_db"
-client = chromadb.PersistentClient(path=DB_PATH)
+DATA_PATH = "/Users/trannguyenmyanh/Documents/TripMind/data/cleaned_data.jsonl"
 
-# Xóa collection cũ để tránh rác dữ liệu nếu cần làm lại từ đầu
-try:
-    client.delete_collection("tripmind_reviews")
-    print("--- Đã xóa collection cũ để làm mới ---")
-except:
-    pass
-
-collection = client.create_collection(
-    name="tripmind_reviews", 
-    metadata={"hnsw:space": "cosine"}
-)
-
-def ingest_data(file_path: str):
-    print(f"Đang đọc dữ liệu từ: {file_path}...")
+def load_encoder():
+    """Khởi tạo model với cấu hình chuẩn d_model=256"""
+    with open(ASSETS_PATH, "rb") as f:
+        assets = pickle.load(f)
     
+    vocab_size = assets['vocab_size']
+    num_categories = len(assets['cat_encoder'].classes_)
+    
+    # Phải khớp d_model=256 với Agent 1
+    encoder = TripMindEncoder(
+        vocab_size=vocab_size,
+        num_categories=num_categories,
+        d_model=256, 
+        nhead=8,
+        num_layers=4
+    )
+    
+    encoder.load_state_dict(torch.load(WEIGHTS_PATH, map_location=DEVICE))
+    encoder.to(DEVICE).eval()
+    return encoder, assets
+
+def ingest_data():
+    encoder, assets = load_encoder()
+    client = chromadb.PersistentClient(path=DB_PATH)
+
+    # Làm mới collection
+    try:
+        client.delete_collection("tripmind_reviews")
+        print("--- Đã xóa collection cũ ---")
+    except:
+        pass
+
+    collection = client.create_collection(
+        name="tripmind_reviews", 
+        metadata={"hnsw:space": "cosine"}
+    )
+
     batch_size = 100
     ids, docs, metas, embs = [], [], [], []
 
-    with open(file_path, 'r', encoding='utf-8') as f:
+    print(f"🏁 Bắt đầu nạp dữ liệu từ: {DATA_PATH}")
+
+    with open(DATA_PATH, 'r', encoding='utf-8') as f:
         for i, line in enumerate(f):
-            data = json.loads(line)
-            
-            review_text = data.get('text', '')
-            if not review_text: continue
-
-            # Xử lý ID tỉnh (đảm bảo format "00", "01")
-            p_id = str(data.get("province_id", "")).zfill(2)
-            
-            # Xử lý Trip Type để Agent sau này có thể lọc ($where)
-            # 1. Lấy dữ liệu trip thô
-            trip_raw = data.get("trip")
-            
-            # 2. Xử lý an toàn: Chuyển từ String/None sang Dictionary
-            trip_data = {}
-            if trip_raw: # Nếu không phải None hoặc chuỗi rỗng
-                if isinstance(trip_raw, str):
-                    try:
-                        trip_data = json.loads(trip_raw)
-                    except json.JSONDecodeError:
-                        trip_data = {}
-                elif isinstance(trip_raw, dict):
-                    trip_data = trip_raw
-
-            # 3. Bây giờ gọi .get() sẽ không bao giờ lỗi nữa
-            # Đảm bảo trip_data luôn là dict, nếu không thì dùng dict trống
-            if not isinstance(trip_data, dict): 
-                trip_data = {}
+            try:
+                data = json.loads(line)
                 
-            trip_type = trip_data.get("trip_type", "any")
-            if not trip_type: trip_type = "any"
+                # 1. Lấy thông tin cơ bản
+                name = data.get('name', 'Unknown').strip()
+                review_text = data.get('text', '').strip()
+                p_id = str(data.get("province_id", "")).zfill(2) # Chuẩn hóa "01", "10"
+                
+                if not review_text and not name:
+                    continue
 
-            # Tạo metadata CHUẨN để phân biệt địa danh
-            metadata = {
-                "province_id": p_id,
-                "destination_id": str(data.get("destination_id")), # CỰC KỲ QUAN TRỌNG
-                "name": data.get("name", "Unknown"),
-                "province_name": data.get("new_province_x", "Unknown"),
-                "rating": float(data.get("rating_x", 0)),
-                "trip_type": trip_type.lower() # Dùng để lọc trong Agent
-            }
+                # 2. Xử lý Categories & Trip Type cho Metadata
+                # Lấy category đầu tiên nếu có
+                cats = data.get('categories', [])
+                cat_name = cats[0].get('name', 'Khác') if isinstance(cats, list) and cats else "Khác"
+                
+                # Làm sạch Trip Type
+                trip_raw = data.get("trip", "{}")
+                trip_data = json.loads(trip_raw) if isinstance(trip_raw, str) else (trip_raw or {})
+                trip_type = str(trip_data.get("trip_type", "any")).lower()
 
-            # Vector hóa
-            vector = get_semantic_vector(review_text, encoder, assets, device)
+                # 3. QUAN TRỌNG: Tạo Rich Text để tăng cường ngữ nghĩa
+                # Gộp Name + Category + Review để Model tìm kiếm hiệu quả theo tên địa danh
+                rich_text = f"Địa danh: {name}. Loại hình: {cat_name}. Đánh giá: {review_text}".lower()
 
-            ids.append(str(data.get('id_review', i)))
-            docs.append(review_text)
-            metas.append(metadata)
-            embs.append(vector)
+                # 4. Tạo Vector Embedding từ Rich Text
+                vector = get_semantic_vector(rich_text, encoder, assets, DEVICE)
 
-            # Thêm theo batch để tối ưu memory
-            if len(ids) >= batch_size:
-                collection.add(ids=ids, documents=docs, metadatas=metas, embeddings=embs)
-                print(f"Đã nạp {i+1} dòng...")
-                ids, docs, metas, embs = [], [], [], []
+                # 5. Chuẩn bị Metadata để lọc (province_id là tiêu chí chính)
+                metadata = {
+                    "province_id": p_id,
+                    "destination_id": str(data.get("destination_id")),
+                    "name": name,
+                    "category": cat_name,
+                    "trip_type": trip_type,
+                    "rating": float(data.get("rating_x", 0))
+                }
 
-    # Nạp nốt phần còn lại
+                ids.append(str(data.get('id_review', f"rev_{i}")))
+                docs.append(review_text) # Lưu review gốc để hiển thị
+                metas.append(metadata)
+                embs.append(vector)
+
+                if len(ids) >= batch_size:
+                    collection.add(ids=ids, documents=docs, metadatas=metas, embeddings=embs)
+                    if (i + 1) % 500 == 0:
+                        print(f"✅ Đã nạp {i+1} bản ghi...")
+                    ids, docs, metas, embs = [], [], [], []
+
+            except Exception as e:
+                continue
+
+    # Nạp phần dư còn lại
     if ids:
         collection.add(ids=ids, documents=docs, metadatas=metas, embeddings=embs)
     
-    print(f"✅ Hoàn thành! Tổng cộng: {collection.count()} bản ghi.")
+    print(f"🎉 Hoàn thành! Tổng cộng: {collection.count()} bản ghi đã sẵn sàng cho Agent 1.")
 
 if __name__ == "__main__":
-    DATA_PATH = "/Users/trannguyenmyanh/Documents/TripMind/data/cleaned_data.jsonl"
-    ingest_data(DATA_PATH)
+    ingest_data()

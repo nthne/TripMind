@@ -29,7 +29,7 @@ def test_full_flow(query, province_id, trip_type="any"):
             meta = res_data.get('metadata', {})
 
             print(f"Thành công! Thời gian xử lý tổng cộng: {elapsed:.2f}s")
-            print(f"Agent 1 tìm thấy: {meta.get('candidates_retrieved')} ứng viên")
+            print(f"Agent 1 tìm thấy: {meta.get('candidates_found')} ứng viên")
             print(f"Agent 2 đã lọc và xếp hạng xong.")
             print("-" * 40)
 
@@ -49,8 +49,8 @@ def test_full_flow(query, province_id, trip_type="any"):
         print(f"❌ Không thể kết nối tới Agent 1: {e}")
 
 if __name__ == "__main__":
-    # Test 1: An Giang - Tâm linh
-    test_full_flow("Tôi muốn đi chùa cầu bình an", "00", "family")
+    # # Test 1: An Giang - Tâm linh
+    # test_full_flow("Tôi muốn đi chùa cầu bình an", "00", "family")
     
     # Test 2: Đắk Lắk - Cà phê/Văn hóa
-    test_full_flow("Thưởng thức cà phê đặc sản và bảo tàng", "31", "friends")
+    test_full_flow("Tôi muốn tham quan di tích lịch sử", "20", "none")
