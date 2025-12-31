@@ -19,8 +19,10 @@ WEIGHTS_PATH = "/Users/trannguyenmyanh/Documents/TripMind/agent/weights/encoder_
 
 with open(ASSETS_PATH, "rb") as f:
     assets = pickle.load(f)
+WORD2IDX = assets['word2idx']
+vocab_size = assets['vocab_size']
 
-encoder = TripMindEncoder(len(assets['word2idx']), 128, 128, 128)
+encoder = TripMindEncoder(vocab_size, d_model=128, nhead=8, num_layers=4)
 encoder.load_state_dict(torch.load(WEIGHTS_PATH, map_location=device))
 encoder.to(device).eval()
 

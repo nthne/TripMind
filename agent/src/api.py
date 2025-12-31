@@ -33,7 +33,7 @@ def load_system(weights_path="/Users/trannguyenmyanh/Documents/TripMind/agent/we
         vocab_size = assets['vocab_size']
         
         # 2. Load Model
-        MODEL = TripMindEncoder(vocab_size, 128, 128, 128)
+        MODEL = TripMindEncoder(vocab_size, d_model=128, nhead=8, num_layers=4)
         MODEL.load_state_dict(torch.load(os.path.join(weights_path, "encoder_weights.pth"), map_location=DEVICE))
         MODEL.to(DEVICE)
         MODEL.eval()

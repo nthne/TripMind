@@ -28,9 +28,9 @@ def test_full_flow(query, province_id, trip_type="any"):
             results = res_data.get('data', [])
             meta = res_data.get('metadata', {})
 
-            print(f"✅ Thành công! Thời gian xử lý tổng cộng: {elapsed:.2f}s")
-            print(f"📊 Agent 1 tìm thấy: {meta.get('candidates_retrieved')} ứng viên")
-            print(f"🏆 Agent 2 đã lọc và xếp hạng xong.")
+            print(f"Thành công! Thời gian xử lý tổng cộng: {elapsed:.2f}s")
+            print(f"Agent 1 tìm thấy: {meta.get('candidates_retrieved')} ứng viên")
+            print(f"Agent 2 đã lọc và xếp hạng xong.")
             print("-" * 40)
 
             for i, place in enumerate(results, 1):
@@ -39,7 +39,7 @@ def test_full_flow(query, province_id, trip_type="any"):
                 print(f"{i}. 🏛️ {place['name']} (ID: {place['destination_id']})")
                 print(f"   🌟 ĐIỂM AGENT 2: {score}")
                 if place.get('reviews'):
-                    print(f"   💬 Review tiêu biểu: \"{place['reviews'][0][:100]}...\"")
+                    print(f"   💬 Review tiêu biểu: \"{place['reviews'][0][:150]}...\"")
                 print("-" * 40)
         else:
             print(f"❌ Lỗi hệ thống: {response.status_code}")
