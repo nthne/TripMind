@@ -1,7 +1,7 @@
-from collections import Counter
-
 def tokenize(text):
     return text.split()
+
+from collections import Counter
 
 def build_vocab(texts, min_freq=2):
     counter = Counter()
