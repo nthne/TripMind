@@ -37,7 +37,7 @@ def predict_batch(texts):
             return [probs.item()]
         return probs.tolist()
 
-def ranking_place(list_places, threshold=0.6):
+def ranking_place(list_places, threshold=0.15):
     """
     Agent 2: Xếp hạng các địa điểm dựa trên phân tích cảm xúc.
     - Input: List địa điểm từ Agent 1 (mỗi địa điểm có mảng reviews)
